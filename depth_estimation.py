@@ -3,14 +3,14 @@ import re
 import random
 import json
 from glob import glob
-
+import time
 import cv2
 import numpy as np
 
 
 # MAIN PATH
 ROOT_PATH = os.getcwd()
-USER_PATH = ROOT_PATH.split('Dockershare')[0]
+USER_PATH = ROOT_PATH.split('PycharmProjects')[0]
 DATASET_PATH = os.path.join(USER_PATH, 'dataset')
 
 # IMGAES PATH
@@ -21,7 +21,7 @@ VIDEO_PATH = os.path.join(OPENPOSE_TEST_PATH, 'video_org')
 OUTPUT_IMAGES = os.path.join(ROOT_PATH, 'output_images')
 
 # VIDEO PATH
-OPENPOSE_TEST_VIDEO_PATH = os.path.join(DATASET_PATH, 'openpose_test_video2')
+OPENPOSE_TEST_VIDEO_PATH = os.path.join(DATASET_PATH, 'openpose_test_video')
 LEE_PATH = os.path.join(OPENPOSE_TEST_VIDEO_PATH, 'lee')
 LIN_PATH = os.path.join(OPENPOSE_TEST_VIDEO_PATH, 'lin')
 LIU_PATH = os.path.join(OPENPOSE_TEST_VIDEO_PATH, 'liu')
@@ -30,6 +30,30 @@ LIU_54CM_PATH = os.path.join(OPENPOSE_TEST_VIDEO_PATH, 'liu_54cm')
 
 
 
+def handraise(left_hand,right_hand):
+    """
+               右肩（0,1) 0
+               右肘 (2,3) 1
+               右腕 (4,5) 2
+
+               左肩（6,7) 0
+               左肘 (8,9) 1
+               左腕 (10,11) 2
+               """
+    l=0
+    r=0
+
+    if ((right_hand[0,0] - right_hand[2,0]) != 0):
+
+        rm1 = (right_hand[0,1] - right_hand[2,1]) / (right_hand[0,0] - right_hand[2,0])  # >0 舉右手
+        if rm1 > 0 and right_hand[2,1] < right_hand[0,1]:
+            r=1
+
+    if ((left_hand[0,0] - left_hand[2,0]) != 0):
+        lm1 = (left_hand[0,1] - left_hand[2,1]) / (left_hand[0,0] - left_hand[2,0])  # >0 放右手
+        if lm1 < 0 and left_hand[2,1] <left_hand[0,1]:
+            l=1
+    return l,r
 
 def load_signal_data():
     """
@@ -79,6 +103,8 @@ def load_body_points(left_json, right_json):
     :param right_json: right image best body port
     :return:
     """
+    left_hand=np.zeros((3,2),dtype=np.float)
+    right_hand = np.zeros((3, 2), dtype=np.float)
     left_body = [2, 3, 4, 8, 9, 10]
     right_body = [5, 6, 7, 11, 12, 13]
     left_face = [14, 16]
@@ -96,6 +122,17 @@ def load_body_points(left_json, right_json):
                 left_points = np.copy(keep)
         # left_points = np.array(left_annotation['people'][0]['pose_keypoints_2d']).reshape((-1, 3))
         # body left right points accuracy take (left + right / 2)
+        k=0
+        for i in [2,3,4]:
+            for j in [0,1]:
+                right_hand[k,j]=left_points[i,j]
+            k+=1
+        k=0
+        for i in [5,6,7]:
+            for j in [0,1]:
+                left_hand[k,j]=left_points[i,j]
+            k+=1
+
         left_points[left_body, 2], left_points[right_body, 2] = [(left_points[left_body, 2] + left_points[right_body, 2])
                                                                  / 2 for i in [0, 1]]
         left_points[left_face, 2], left_points[right_face, 2] = [(left_points[left_face, 2] + left_points[right_face, 2])
@@ -122,15 +159,15 @@ def load_body_points(left_json, right_json):
     index = np.argmax((left_points[:, 2] + right_points[:, 2]))
     # it is possible cause left right up site down
     if index in left_body:
-        return (left_points[index]+left_points[index+3])/2, (right_points[index]+right_points[index+3])/2
+        return (left_points[index]+left_points[index+3])/2, (right_points[index]+right_points[index+3])/2,left_hand,right_hand
     elif index in right_body:
-        return (left_points[index]+left_points[index-3])/2, (right_points[index]+right_points[index-3])/2
+        return (left_points[index]+left_points[index-3])/2, (right_points[index]+right_points[index-3])/2,left_hand,right_hand
     elif index in left_face:
-        return (left_points[index]+left_points[index+1])/2, (right_points[index]+right_points[index+1])/2
+        return (left_points[index]+left_points[index+1])/2, (right_points[index]+right_points[index+1])/2,left_hand,right_hand
     elif index in right_face:
-        return (left_points[index]+left_points[index-1])/2, (right_points[index]+right_points[index-1])/2
+        return (left_points[index]+left_points[index-1])/2, (right_points[index]+right_points[index-1])/2,left_hand,right_hand
 
-    return left_points[index], right_points[index]
+    return left_points[index], right_points[index],left_hand,right_hand
 
 
 # Load images, annotations data
@@ -143,8 +180,11 @@ def depth_estimation(x_left, x_right, f=33.4, d=114):
     :param d: two camera distance
     :return:
     """
-    depth = abs(f * d / ((x_left - x_right) / 72 * 2.54)) / 100 #  - 0.418879
-    return depth
+    depth = abs(f * d / ((x_left - x_right) / 72 * 2.54)) / 100  - 0.418879
+    dg = 90 - ((x_left - 1280 / 2) / 1280) * 78
+    dg2 = 90 - (((1280 / 2)-x_right) / 1280) * 78
+    depth2 = abs(110 * np.sin(dg * np.pi / 180) * np.sin(dg2 * np.pi / 180) / np.sin((dg + dg2) * np.pi / 180)) / 100
+    return depth,depth2
 
 
 def accuracy(ground_truth, depth):
@@ -197,7 +237,7 @@ def test_images():
     for left_annotation, right_annotation in zip(left_annotations, right_annotations):
         filename = os.path.split(left_annotation)[-1].split('.')[0]
         try:
-            left_point, right_point = load_body_points(left_annotation, right_annotation)
+            left_point, right_point,left_hand,right_hand = load_body_points(left_annotation, right_annotation)
             depth = depth_estimation(left_point[0], right_point[0])
             acc = accuracy(filename, depth)
         except IndexError:
@@ -254,14 +294,20 @@ def test_video(mode='video', test_path='/', test_file=0, ground_truth=None):
             break
 
         try:
-            left_point, right_point = load_body_points(left_annotations[index], right_annotations[index])
-            depth = depth_estimation(left_point[0], right_point[0], d=110)
+            left_point, right_point,left_hand,right_hand = load_body_points(left_annotations[index], right_annotations[index])
+            # TODO: add
+            l_raise,r_raise=handraise(left_hand,right_hand)
+
+            depth,depth2 = depth_estimation(left_point[0], right_point[0], d=110)
             if ground_truth:
                 acc = accuracy(ground_truth, depth)
+                acc2=accuracy(ground_truth,depth2)
         except IndexError:
             left_point, right_point = [0, 0, 0], [0, 0, 0]
             depth = 0
+            depth2=0
             acc = 0
+            acc2=0
 
         # draw circle at detect point
         cv2.circle(l_img, (int(left_point[0]), int(left_point[1])), 4, (0, 255, 0), -1)
@@ -275,14 +321,20 @@ def test_video(mode='video', test_path='/', test_file=0, ground_truth=None):
         font = cv2.FONT_HERSHEY_SIMPLEX
         cv2.putText(output_img, text1, (100, 100), font, fontScale=1,
                     color=(0, 0, 0), thickness=2, lineType=cv2.LINE_AA)
-        cv2.putText(output_img, text2, (100, 150), font, fontScale=1,
+        cv2.putText(output_img, text2+'      d2    '+str(depth2), (100, 150), font, fontScale=1,
                     color=(0, 0, 0), thickness=2, lineType=cv2.LINE_AA)
         if ground_truth:
-            text3 = 'Accuracy: {:.2f}%'.format(acc)
+            text3 = 'Accuracy1: {:.2f}  Accuracy2: {:.2f}'.format(acc, acc2)
             cv2.putText(output_img, text3, (100, 200), font, fontScale=1,
                         color=(0, 0, 0), thickness=2, lineType=cv2.LINE_AA)
+        if l_raise==1:
+            cv2.putText(output_img,'left',(100,250),font,fontScale=1,color=(0,0,0),thickness=2,lineType=cv2.LINE_AA)
+        if r_raise == 1:
+            cv2.putText(output_img, 'right', (100, 250), font, fontScale=1, color=(0, 0, 0), thickness=2,
+                        lineType=cv2.LINE_AA)
         cv2.imshow('Video', output_img)
 
+        #time.sleep(0.03)
         # Save Video
         out.write(output_img)
 
@@ -316,5 +368,5 @@ if __name__ == '__main__':
     # test_images()
 
     # test video pipeline
-    test_video(mode='video', test_path=LIU_PATH, test_file=3, ground_truth=None)
+    test_video(mode='video', test_path=LIN_PATH, test_file=3, ground_truth=15)
 
